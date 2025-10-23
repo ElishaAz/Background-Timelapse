@@ -11,7 +11,7 @@ android {
     defaultConfig {
         applicationId "floe.timelapse"
         minSdkVersion 21
-        targetSdkVersion 29
+        targetSdkVersion 36
     }
 
     buildTypes {

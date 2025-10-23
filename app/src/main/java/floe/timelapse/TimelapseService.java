@@ -6,6 +6,9 @@
 
 package floe.timelapse;
 
+import static android.app.PendingIntent.FLAG_IMMUTABLE;
+import static android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA;
+
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
@@ -79,17 +82,17 @@ public class TimelapseService extends Service {
     };
     private Timer timer = null;
 
-	/*private Camera.AutoFocusCallback afCallback = new Camera.AutoFocusCallback() {
-		@Override
-		public void onAutoFocus( boolean success, Camera camera ) {
-			if (success) {
-				Log.v( TAG, "autofocus done, taking picture" );
-				cam.takePicture( null, null, imageCallback );
-			} else {
-				Log.v( TAG, "autofocus failed" );
-			}
-		}
-	};*/
+    /*private Camera.AutoFocusCallback afCallback = new Camera.AutoFocusCallback() {
+        @Override
+        public void onAutoFocus( boolean success, Camera camera ) {
+            if (success) {
+                Log.v( TAG, "autofocus done, taking picture" );
+                cam.takePicture( null, null, imageCallback );
+            } else {
+                Log.v( TAG, "autofocus failed" );
+            }
+        }
+    };*/
     private TimelapseTask task = null;
 
     @Override
@@ -110,6 +113,22 @@ public class TimelapseService extends Service {
             Log.e(TAG, "::onCreate: ", e);
             Toast.makeText(this, TAG + " error (camera problem?)", Toast.LENGTH_SHORT).show();
         }
+    }
+
+    @Override
+    public int onStartCommand(Intent intent, int flags, int startId) {
+        Log.d(TAG, "onStartCommand");
+        setupNotification();
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                startForeground(notifyID, notification.build(), FOREGROUND_SERVICE_TYPE_CAMERA);
+            } else {
+                startForeground(notifyID, notification.build());
+            }
+        }
+
+        return START_STICKY;
     }
 
     // called when service quits
@@ -141,7 +160,7 @@ public class TimelapseService extends Service {
             task = new TimelapseTask();
             timer.scheduleAtFixedRate(task, delay, delay);
 
-            setupNotification();
+            updateNotification("Images: 0");
 
         } catch (Exception e) {
             Log.e(TAG, "::launch: ", e);
@@ -222,9 +241,7 @@ public class TimelapseService extends Service {
         notification.setVisibility(NotificationCompat.VISIBILITY_PUBLIC);
 
         // The PendingIntent to launch our activity if the user selects this notification
-        contentIntent = PendingIntent.getActivity(this, 0, new Intent(this, Timelapse.class), 0);
-
-        updateNotification("Images: 0");
+        contentIntent = PendingIntent.getActivity(this, 0, new Intent(this, Timelapse.class), FLAG_IMMUTABLE);
     }
 
     // update persistent notification

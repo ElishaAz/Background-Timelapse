@@ -32,8 +32,7 @@ import androidx.core.app.ActivityCompat;
 
 
 public class Timelapse extends Activity {
-
-    // --Commented out by Inspection (11/02/21 12:39):private final String TAG = "Timelapse";
+    private final String TAG = "Timelapse";
     private final int PERMISSION_REQUEST_CODE = 0x100;
     private final OnClickListener mAboutListener = new OnClickListener() {
         public void onClick(View v) {
@@ -99,7 +98,6 @@ public class Timelapse extends Activity {
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
-
         super.onCreate(savedInstanceState);
         setContentView(R.layout.main);
 
@@ -116,19 +114,27 @@ public class Timelapse extends Activity {
         // setup the preview surface
         tv = findViewById(R.id.view);
 
-        // check for camera/storage permission
+        // check for camera/notifications permission
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             if (checkSelfPermission(Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED ||
-                    checkSelfPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
-                ActivityCompat.requestPermissions(this, new String[]{
-                        Manifest.permission.CAMERA,
-                        Manifest.permission.WRITE_EXTERNAL_STORAGE
-                }, PERMISSION_REQUEST_CODE);
+                    checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    ActivityCompat.requestPermissions(this, new String[]{
+                            Manifest.permission.CAMERA,
+                            Manifest.permission.POST_NOTIFICATIONS
+                    }, PERMISSION_REQUEST_CODE);
+                } else {
+                    ActivityCompat.requestPermissions(this, new String[]{
+                            Manifest.permission.CAMERA
+                    }, PERMISSION_REQUEST_CODE);
+                }
             }
         }
-
         // bind to the service, starting it when not yet running
         myIntent = new Intent(this, TimelapseService.class);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            startForegroundService(myIntent);
+        }
         bindService(myIntent, mConnection, Context.BIND_AUTO_CREATE);
     }
 
@@ -137,7 +143,7 @@ public class Timelapse extends Activity {
         if (requestCode == PERMISSION_REQUEST_CODE) {
             // If request is cancelled, the result arrays are empty.
             if (grantResults.length == 0 || grantResults[0] != PackageManager.PERMISSION_GRANTED) {
-                Toast.makeText(Timelapse.this, "Unable to run without camera/storage permission.", Toast.LENGTH_LONG).show();
+                Toast.makeText(Timelapse.this, "Unable to run without camera permission.", Toast.LENGTH_LONG).show();
             }
         }
     }
