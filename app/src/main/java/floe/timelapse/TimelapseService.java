@@ -2,7 +2,7 @@
  *  Android Background Timelapse
  *  Copyright (c) 2009-21 by Florian Echtler <floe@butterbrot.org>
  *  Licensed under GNU General Public License (GPL) 3 or later
-*/
+ */
 
 package floe.timelapse;
 
@@ -10,78 +10,74 @@ import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.app.Service;
+import android.content.Intent;
+import android.graphics.ImageFormat;
+import android.graphics.Rect;
+import android.graphics.YuvImage;
+import android.hardware.Camera;
+import android.os.Binder;
 import android.os.Build;
 import android.os.Environment;
-import android.view.TextureView;
-import android.content.Intent;
-import android.os.Binder;
 import android.os.IBinder;
-import android.widget.Toast;
-
-import java.util.Locale;
-import java.util.TimerTask;
-import java.util.Timer;
-import java.util.List;
-import java.lang.String;
-import android.hardware.Camera;
-import android.graphics.ImageFormat;
-import android.graphics.YuvImage;
-import android.graphics.Rect;
-import java.io.File;
-import java.io.FileOutputStream;
-import android.util.Log;
 import android.text.format.Time;
+import android.util.Log;
+import android.view.TextureView;
+import android.widget.Toast;
 
 import androidx.core.app.NotificationCompat;
 import androidx.core.app.NotificationManagerCompat;
 
+import java.io.File;
+import java.io.FileOutputStream;
+import java.util.List;
+import java.util.Locale;
+import java.util.Timer;
+import java.util.TimerTask;
+
 
 public class TimelapseService extends Service {
 
-	private NotificationManagerCompat mNM;
-	private NotificationCompat.Builder notification;
-	private PendingIntent contentIntent;
+    private final String TAG = "TimelapseService";
+    private final int notifyID = 0xf10e;
+    private final IBinder mybinder = new TimelapseBinder();
+    private NotificationManagerCompat mNM;
+    private NotificationCompat.Builder notification;
+    private PendingIntent contentIntent;
+    private int counter = 0;
+    private Camera cam;
+    private String outdir;
+    // preview callback with actual image data
+    private final Camera.PreviewCallback imageCallback = new Camera.PreviewCallback() {
 
-	private final String TAG = "TimelapseService";
-	private final int notifyID = 0xf10e;
+        @Override
+        public void onPreviewFrame(byte[] _data, Camera _camera) {
 
-	private int counter = 0;
-	private Camera cam;
-	private String outdir;
+            int width = 1280;
+            int height = 720;
 
-	private Timer timer = null;
-	private TimelapseTask task = null;
+            Log.v(TAG, "::imageCallback: picture retrieved (" + _data.length + " bytes), storing..");
+            //String myname = outdir.concat("img").concat(String.valueOf(counter++)).concat(".yuv");
+            String myname = outdir.concat("img").concat(String.format(Locale.getDefault(), "%06d", counter++)).concat(".jpg");
 
-	// preview callback with actual image data
-	private final Camera.PreviewCallback imageCallback = new Camera.PreviewCallback() {
+            // store YUV data
+            try {
 
-		@Override public void onPreviewFrame( byte[] _data, Camera _camera ) {
+                FileOutputStream fos = new FileOutputStream(myname);
+                YuvImage yuvImage = new YuvImage(_data, ImageFormat.NV21, width, height, null);
+                yuvImage.compressToJpeg(new Rect(0, 0, width, height), 100, fos);
+                fos.close();
 
-			int width = 1280;
-			int height = 720;
+                CharSequence text = "Images: ".concat(String.format(Locale.getDefault(), "%d", counter));
+                updateNotification(text);
 
-			Log.v( TAG, "::imageCallback: picture retrieved ("+_data.length+" bytes), storing.." );
-			//String myname = outdir.concat("img").concat(String.valueOf(counter++)).concat(".yuv");
-			String myname = outdir.concat("img").concat(String.format(Locale.getDefault(),"%06d",counter++)).concat(".jpg");
+                Log.v(TAG, "::imageCallback: picture stored successfully as " + myname);
 
-			// store YUV data
-			try {
-
-				FileOutputStream fos = new FileOutputStream(myname);
-				YuvImage yuvImage = new YuvImage( _data, ImageFormat.NV21, width, height, null);
-				yuvImage.compressToJpeg(new Rect(0, 0, width, height), 100, fos);
-				fos.close();
-
-				CharSequence text = "Images: ".concat(String.format(Locale.getDefault(),"%d",counter));
-				updateNotification( text );
-
-				Log.v( TAG, "::imageCallback: picture stored successfully as " + myname );
-
-			} catch (Exception e) {
-				Log.e( TAG, "::imageCallback: ", e );
-			}
-		}
-	};
+            } catch (Exception e) {
+                Log.e(TAG, "::imageCallback: ", e);
+            }
+        }
+    };
+    private Timer timer = null;
 
 	/*private Camera.AutoFocusCallback afCallback = new Camera.AutoFocusCallback() {
 		@Override
@@ -94,182 +90,176 @@ public class TimelapseService extends Service {
 			}
 		}
 	};*/
+    private TimelapseTask task = null;
 
+    @Override
+    public IBinder onBind(Intent intent) {
+        return mybinder;
+    }
 
-	// Timer task for continuous triggering of preview callbacks
-	private class TimelapseTask extends TimerTask {
-		@Override public void run() {
-			//Log.v( TAG, "starting autofocus" );
-			//cam.autoFocus( afCallback );
-			Log.v( TAG, "triggering camera image callback" );
-			//cam.takePicture( null, null, imageCallback );
-			cam.setOneShotPreviewCallback( imageCallback );
-		}
-	}
+    // called when service gets created
+    @Override
+    public void onCreate() {
 
+        mNM = NotificationManagerCompat.from(this.getApplicationContext());
 
-	// Binder class for activity <-> service interface
-	public class TimelapseBinder extends Binder {
-		TimelapseService getService() {
-			return TimelapseService.this;
-		}
-	}
+        try {
+            cam = Camera.open();
+            Toast.makeText(this, TAG + " initialized", Toast.LENGTH_SHORT).show();
+        } catch (Exception e) {
+            Log.e(TAG, "::onCreate: ", e);
+            Toast.makeText(this, TAG + " error (camera problem?)", Toast.LENGTH_SHORT).show();
+        }
+    }
 
-	private final IBinder mybinder = new TimelapseBinder();
+    // called when service quits
+    @Override
+    public void onDestroy() {
 
-	@Override public IBinder onBind( Intent intent ) {
-		return mybinder;
-	}
+        // cleanup everything
+        cleanup();
+        cam.release();
 
+        // Tell the user we stopped.
+        Toast.makeText(this, TAG + " terminated", Toast.LENGTH_SHORT).show();
+    }
 
-	// called when service gets created
-	@Override public void onCreate() {
+    // after service has been started, this is called from the Activity to set the preview surface and launch the timer task
+    public void launch(TextureView tv, int delay) {
 
-		mNM = NotificationManagerCompat.from(this.getApplicationContext());
+        try {
 
-		try {
-			cam = Camera.open();
-			Toast.makeText( this, TAG + " initialized", Toast.LENGTH_SHORT ).show();
-		} catch (Exception e) {
-			Log.e( TAG, "::onCreate: ", e );
-			Toast.makeText(this, TAG + " error (camera problem?)", Toast.LENGTH_SHORT).show();
-		}
-	}
+            if (isRunning()) {
+                Log.w(TAG, "::launch: already running.");
+                return;
+            }
 
-	// called when service quits
-	@Override public void onDestroy() {
+            setupCamera(tv);
+            setupOutdir();
 
-		// cleanup everything
-		cleanup();
-		cam.release();
+            timer = new Timer();
+            task = new TimelapseTask();
+            timer.scheduleAtFixedRate(task, delay, delay);
 
-		// Tell the user we stopped.
-		Toast.makeText( this, TAG + " terminated", Toast.LENGTH_SHORT ).show();
-	}
+            setupNotification();
 
+        } catch (Exception e) {
+            Log.e(TAG, "::launch: ", e);
+            cleanup();
+        }
+    }
 
-	// after service has been started, this is called from the Activity to set the preview surface and launch the timer task
-	public void launch( TextureView tv, int delay ) {
+    // cleanup all resources
+    public void cleanup() {
 
-		try {
+        // Cancel the persistent notification.
+        mNM.cancel(notifyID);
 
-			if (isRunning()) {
-				Log.w( TAG, "::launch: already running." );
-				return;
-			}
+        // cleanup the camera
+        cam.stopPreview();
 
-			setupCamera( tv );
-			setupOutdir();
+        // stop the timer
+        if (isRunning()) {
+            timer.cancel();
+            timer = null;
+            task = null;
+            Toast.makeText(this, TAG + " stopped", Toast.LENGTH_SHORT).show();
+        }
+    }
 
-			timer = new Timer();
-			task = new TimelapseTask();
-			timer.scheduleAtFixedRate( task, delay, delay );
+    // initialize camera
+    private void setupCamera(TextureView tv) throws java.io.IOException {
 
-			setupNotification();
+        //Log.v( TAG, "::setupCamera: " + sv.toString() );
 
-		} catch (Exception e) {
-			Log.e( TAG, "::launch: ", e );
-			cleanup();
-		}
-	}
+        Camera.Parameters param = cam.getParameters();
+        List<Camera.Size> pvsizes = param.getSupportedPreviewSizes();
+        int len = pvsizes.size();
+        for (int i = 0; i < len; i++)
+            Log.v(TAG, "camera preview format: " + pvsizes.get(i).width + "x" + pvsizes.get(i).height);
+        param.setPreviewFormat(ImageFormat.NV21);
+        //param.setPreviewSize( pvsizes.get(len-1).width, pvsizes.get(len-1).height );
+        param.setPreviewSize(1280, 720);
+        cam.setParameters(param);
 
+        cam.setPreviewTexture(tv.getSurfaceTexture());
+        cam.startPreview();
+    }
 
+    // initialize output directory
+    private void setupOutdir() {
 
-	// cleanup all resources
-	public void cleanup() {
+        Time now = new Time();
+        now.set(System.currentTimeMillis());
 
-		// Cancel the persistent notification.
-		mNM.cancel( notifyID );
+        outdir = Environment.getExternalStorageDirectory().getPath() + "/DCIM/floe.timelapse/" + now.format("%Y%m%d-%H%M%S/");
+        File tmp = new File(outdir);
 
-		// cleanup the camera
-		cam.stopPreview();
+        if ((!tmp.isDirectory()) && (!tmp.mkdirs())) {
+            Toast.makeText(this, TAG + ": error creating output directory - SD card not mounted?", Toast.LENGTH_SHORT).show();
+            throw new RuntimeException("Error creating output directory " + outdir);
+        }
 
-		// stop the timer
-		if (isRunning()) {
-			timer.cancel();
-			timer = null;
-			task = null;
-			Toast.makeText( this, TAG + " stopped", Toast.LENGTH_SHORT ).show();
-		}
-	}
+        counter = 0;
+    }
 
+    // initialize the persistent notification
+    public void setupNotification() {
 
-	// initialize camera
-	private void setupCamera( TextureView tv ) throws java.io.IOException {
+        Toast.makeText(this, TAG + " started", Toast.LENGTH_SHORT).show();
 
-		//Log.v( TAG, "::setupCamera: " + sv.toString() );
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            NotificationChannel channel = new NotificationChannel(TAG, "Timelapse Channel", NotificationManager.IMPORTANCE_LOW);
+            mNM.createNotificationChannel(channel);
+        }
 
-		Camera.Parameters param = cam.getParameters();
-		List<Camera.Size> pvsizes = param.getSupportedPreviewSizes();
-		int len = pvsizes.size();
-		for (int i = 0; i < len; i++)
-			Log.v( TAG, "camera preview format: "+pvsizes.get(i).width+"x"+pvsizes.get(i).height );
-		param.setPreviewFormat( ImageFormat.NV21 );
-		//param.setPreviewSize( pvsizes.get(len-1).width, pvsizes.get(len-1).height );
-		param.setPreviewSize( 1280, 720 );
-		cam.setParameters( param );
+        // Display a notification about us starting.  We put an icon in the status bar.
+        notification = new NotificationCompat.Builder(this, TAG);
+        notification.setContentTitle(TAG + " started"); //, System.currentTimeMillis() );
+        notification.setOngoing(true); // flags |= Notification.FLAG_ONGOING_EVENT | Notification.FLAG_ONLY_ALERT_ONCE;
+        notification.setSmallIcon(R.drawable.ic_baseline_camera_enhance_24);
+        notification.setPriority(NotificationCompat.PRIORITY_LOW);
+        notification.setVisibility(NotificationCompat.VISIBILITY_PUBLIC);
 
-		cam.setPreviewTexture( tv.getSurfaceTexture() );
-		cam.startPreview();
-	}
+        // The PendingIntent to launch our activity if the user selects this notification
+        contentIntent = PendingIntent.getActivity(this, 0, new Intent(this, Timelapse.class), 0);
 
+        updateNotification("Images: 0");
+    }
 
-	// initialize output directory
-	private void setupOutdir() {
+    // update persistent notification
+    private void updateNotification(CharSequence text) {
 
-		Time now = new Time();
-		now.set( System.currentTimeMillis() );
+        // Set the info for the views that show in the notification panel.
+        notification.setContentTitle("Timelapse Image Service").setContentText(text).setContentIntent(contentIntent);
 
-		outdir = Environment.getExternalStorageDirectory().getPath() + "/DCIM/floe.timelapse/" + now.format("%Y%m%d-%H%M%S/");
-		File tmp = new File(outdir);
+        // Send the notification.
+        // We use a layout id because it is a unique number.  We use it later to cancel.
+        mNM.notify(notifyID, notification.build());
+    }
 
-		if ((!tmp.isDirectory()) && (!tmp.mkdirs())) {
-			Toast.makeText( this, TAG + ": error creating output directory - SD card not mounted?", Toast.LENGTH_SHORT ).show();
-			throw new RuntimeException( "Error creating output directory " + outdir );
-		}
+    // helper function to check state
+    public boolean isRunning() {
+        return (timer != null);
+    }
 
-		counter = 0;
-	}
+    // Timer task for continuous triggering of preview callbacks
+    private class TimelapseTask extends TimerTask {
+        @Override
+        public void run() {
+            //Log.v( TAG, "starting autofocus" );
+            //cam.autoFocus( afCallback );
+            Log.v(TAG, "triggering camera image callback");
+            //cam.takePicture( null, null, imageCallback );
+            cam.setOneShotPreviewCallback(imageCallback);
+        }
+    }
 
-
-	// initialize the persistent notification
-	public void setupNotification() {
-
-		Toast.makeText( this, TAG + " started", Toast.LENGTH_SHORT ).show();
-
-		if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-			NotificationChannel channel = new NotificationChannel(TAG, "Timelapse Channel", NotificationManager.IMPORTANCE_LOW);
-			mNM.createNotificationChannel(channel);
-		}
-
-		// Display a notification about us starting.  We put an icon in the status bar.
-		notification = new NotificationCompat.Builder(this, TAG);
-		notification.setContentTitle( TAG + " started" ); //, System.currentTimeMillis() );
-		notification.setOngoing(true); // flags |= Notification.FLAG_ONGOING_EVENT | Notification.FLAG_ONLY_ALERT_ONCE;
-		notification.setSmallIcon(R.drawable.ic_baseline_camera_enhance_24);
-		notification.setPriority(NotificationCompat.PRIORITY_LOW);
-		notification.setVisibility(NotificationCompat.VISIBILITY_PUBLIC);
-
-		// The PendingIntent to launch our activity if the user selects this notification
-		contentIntent = PendingIntent.getActivity( this, 0, new Intent( this, Timelapse.class ), 0);
-
-		updateNotification( "Images: 0" );
-	}
-
-	// update persistent notification
-	private void updateNotification( CharSequence text ) {
-
-		// Set the info for the views that show in the notification panel.
-		notification.setContentTitle("Timelapse Image Service").setContentText(text).setContentIntent( contentIntent );
-
-		// Send the notification.
-		// We use a layout id because it is a unique number.  We use it later to cancel.
-		mNM.notify( notifyID, notification.build() );
-	}
-
-	// helper function to check state
-	public boolean isRunning() {
-		return (timer != null);
-	}
+    // Binder class for activity <-> service interface
+    public class TimelapseBinder extends Binder {
+        TimelapseService getService() {
+            return TimelapseService.this;
+        }
+    }
 }
 
